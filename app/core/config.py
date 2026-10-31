@@ -14,7 +14,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Annotated, Literal
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 _KNOWN_LANGUAGE_CODES = {"en", "hi", "bn", "ta", "te", "mr", "gu", "pa", "kn", "ml", "ur"}
@@ -65,11 +65,30 @@ class JWTSettings(BaseSettings):
 class LLMSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    llm_provider: Literal["ollama", "vllm"] = "ollama"
-    gemma_model_name: str = "gemma3n"
+    # "gemini" = Gemma 4 via Google GenAI / Gemini API (hackday demo path).
+    llm_provider: Literal["ollama", "vllm", "gemini"] = "ollama"
+    # Default: Gemma 4 26B A4B (faster). Fallback: gemma-4-31b-it.
+    gemma_model_name: str = "gemma-4-26b-a4b-it"
+    # Accept GEMMA_FALLBACK_MODEL or legacy GEMMA_FALLBACK_MODEL_NAME.
+    gemma_fallback_model_name: str = Field(
+        default="gemma-4-31b-it",
+        validation_alias=AliasChoices(
+            "gemma_fallback_model_name",
+            "GEMMA_FALLBACK_MODEL_NAME",
+            "gemma_fallback_model",
+            "GEMMA_FALLBACK_MODEL",
+        ),
+    )
     ollama_base_url: str = "http://localhost:11434"
     vllm_base_url: str = "http://localhost:8001"
     embedding_model: str = "nomic-embed-text"
+    # Read only from .env / environment — never hardcode. Owner inserts the key.
+    google_api_key: SecretStr | None = None
+
+    @property
+    def gemma_fallback_model(self) -> str:
+        """Preferred alias for the fallback model id (Me 1 / Me 2 contract)."""
+        return self.gemma_fallback_model_name
 
 
 class VectorDBSettings(BaseSettings):
@@ -125,7 +144,7 @@ class Settings(BaseSettings):
 
     environment: Literal["dev", "staging", "prod"] = "dev"
     cors_origins: Annotated[list[str], NoDecode] = Field(
-        default_factory=lambda: ["http://localhost:3000"]
+        default_factory=lambda: ["*"]
     )
     max_upload_size: int = 20_971_520  # bytes
     upload_directory: str = "./uploads"
