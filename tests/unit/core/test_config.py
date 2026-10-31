@@ -2,7 +2,10 @@ import pytest
 from pydantic import ValidationError
 
 from app.core.config import (
+    DatabaseSettings,
     I18nSettings,
+    LLMSettings,
+    RedisSettings,
     Settings,
     get_settings,
 )
@@ -16,17 +19,52 @@ def _clear_settings_cache():
 
 
 def test_settings_load_with_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
-    for var in ("DATABASE_URL", "POSTGRES_USER", "REDIS_URL", "CORS_ORIGINS"):
+    # Nested settings models each read env_file=".env"; pass _env_file=None
+    # so a developer's local .env cannot poison default assertions.
+    for var in (
+        "DATABASE_URL",
+        "POSTGRES_USER",
+        "REDIS_URL",
+        "CORS_ORIGINS",
+        "LLM_PROVIDER",
+        "GEMMA_MODEL_NAME",
+        "GEMMA_FALLBACK_MODEL_NAME",
+        "GEMMA_FALLBACK_MODEL",
+        "GOOGLE_API_KEY",
+    ):
         monkeypatch.delenv(var, raising=False)
 
-    settings = Settings()
+    settings = Settings(
+        _env_file=None,
+        database=DatabaseSettings(_env_file=None),
+        redis=RedisSettings(_env_file=None),
+        llm=LLMSettings(_env_file=None),
+        i18n=I18nSettings(_env_file=None),
+    )
 
     assert settings.environment == "dev"
     assert settings.database.postgres_db == "nyayaos"
     assert settings.redis.redis_host == "localhost"
+    assert settings.cors_origins == ["*"]
     assert settings.llm.llm_provider == "ollama"
+    assert settings.llm.gemma_model_name == "gemma-4-26b-a4b-it"
+    assert settings.llm.gemma_fallback_model_name == "gemma-4-31b-it"
+    assert settings.llm.gemma_fallback_model == "gemma-4-31b-it"
+    assert settings.llm.google_api_key is None
     assert settings.i18n.default_language == "en"
     assert "hi" in settings.i18n.supported_languages
+
+
+def test_google_api_key_loaded_as_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GOOGLE_API_KEY", "<your-key>")
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+
+    llm = LLMSettings(_env_file=None)
+
+    assert llm.llm_provider == "gemini"
+    assert llm.google_api_key is not None
+    assert llm.google_api_key.get_secret_value() == "<your-key>"
+    assert "SecretStr" in repr(llm.google_api_key)
 
 
 def test_get_settings_is_cached_singleton() -> None:
@@ -43,9 +81,9 @@ def test_database_async_dsn_assembled_from_parts(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setenv("POSTGRES_PORT", "5433")
     monkeypatch.setenv("POSTGRES_DB", "casesdb")
 
-    settings = Settings()
+    database = DatabaseSettings(_env_file=None)
 
-    assert settings.database.async_dsn == (
+    assert database.async_dsn == (
         "postgresql+asyncpg://alice:s3cret@db.internal:5433/casesdb"
     )
 
